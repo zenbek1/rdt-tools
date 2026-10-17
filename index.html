@@ -126,9 +126,9 @@ dl{margin:0}dt{font-weight:600;margin-top:10px}dd{margin:2px 0 0;color:var(--mut
 <div class="card"><div class="cal-h"><h2 style="margin:0" id="calT"></h2><div class="bar"><button id="cPrev" aria-label="Предыдущий месяц">‹</button><button id="cNext" aria-label="Следующий месяц">›</button></div></div><div class="cal" id="cal"></div></div>
 </div>
 
-<div class="card"><h2>По сетапам</h2><div class="scroll"><table><thead><tr><th>Сетап</th><th></th><th></th><th>Сделок</th><th>Прибыльных</th><th>P&amp;L</th></tr></thead><tbody id="bySetup"></tbody></table></div></div>
+<div class="card"><h2>По сетапам</h2><div class="scroll"><table><thead><tr><th>Сетап</th><th></th><th></th><th>Сделок</th><th>Прибыльных</th><th>P&L</th></tr></thead><tbody id="bySetup"></tbody></table></div></div>
 
-<div class="card"><h2>Сделки</h2><div class="scroll"><table><thead><tr><th>Дата</th><th>Тикер</th><th>Сетап</th><th>Напр.</th><th>Вход</th><th>Выход</th><th>Акций</th><th>P&amp;L</th><th>R</th></tr></thead><tbody id="tb"></tbody></table></div><div class="empty" id="empty" hidden>Сделок пока нет. Нажмите «Новая сделка» или загрузите пример в окне «Данные».</div></div>
+<div class="card"><h2>Сделки</h2><div class="scroll"><table><thead><tr><th>Дата</th><th>Тикер</th><th>Сетап</th><th>Напр.</th><th>Вход</th><th>Выход</th><th>Акций</th><th>P&L</th><th>R</th></tr></thead><tbody id="tb"></tbody></table></div><div class="empty" id="empty" hidden>Сделок пока нет. Нажмите «Новая сделка» или загрузите пример в окне «Данные».</div></div>
 <p class="empty">Учебный инструмент, не финансовый совет. Данные хранятся только в этом браузере.</p>
 </section>
 <section class="card narrow" id="ck" hidden>
@@ -188,7 +188,7 @@ dl{margin:0}dt{font-weight:600;margin-top:10px}dd{margin:2px 0 0;color:var(--mut
 const $=id=>document.getElementById(id);
 const f=(x,d=2)=>Number.isFinite(x)?x.toLocaleString("ru-RU",{minimumFractionDigits:d,maximumFractionDigits:d}):"—";
 const money=x=>(x<0?"−":"")+"$"+f(Math.abs(x));
-const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&","<":"<",">":">",'"':"""}[c]));
 const ymd=d=>{const z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,10)};
 const pl=t=>(t.x-t.e)*t.d*t.s-(t.fee||0);
 const rr=t=>t.r?pl(t)/t.r:null;
@@ -314,6 +314,40 @@ document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
 function calcPos(){
   const d=n("dir"),e=n("entry"),a=n("atr"),risk=n("acct")*n("rp")/100,sd=n("sATR")*a,td=n("tATR")*a;
   const stop=e-d*sd,tgt=e+d*td,sh=sd>0?Math.floor(risk/sd):0,c=d>0?"long":"short";
-  $("posOut").innerHTML=`<div class="big ${c}">${sh} акций</div>`+row("Риск на сделку",`$"+f(risk)`)+  // wait, I need to be careful with the content. The original has proper escaping.
- // Actually, since the content is long, I should use the exact content from the file.
+  $("posOut").innerHTML=`<div class="big ${c}">${sh} акций</div>`+row("Риск на сделку",`$"+f(risk)`)+row("Стоп",`$"+f(stop)`,"short")+row("Цель",`$"+f(tgt)`,"long")+row("Расстояние до стопа",`$"+f(sd)`)+row("Возможная прибыль",`$"+f(sh*td)`)+row("Прибыль к риску",sd>0?`${f(td/sd)} R`:"—")+row("Стоимость позиции",`$"+f(sh*e)`)+(sh*e>n("acct")?'<p class="note short">Позиция больше счёта: нужно плечо. Проверьте, что оно доступно и вы готовы к риску.</p>':"")+(d<0?'<p class="note">Для шорта проверьте borrow и риск short squeeze.</p>':"");
 }
+const rrsOf=(c,a,m,ma)=>a?(c-(ma?m/ma:0)*a)/a:0;
+function calcRRS(){
+  const r=rrsOf(n("sChg"),n("sAtr"),n("mChg"),n("mAtr")),pi=n("mAtr")?n("mChg")/n("mAtr"):0;
+  $("rrsOut").innerHTML=`<div class="big ${r>=0?"long":"short"}">${f(r)}</div>`+row("Движение SPY в ATR",f(pi))+row("Ожидаемое движение акции",`$"+f(pi*n("sAtr"))`)+row("Вывод",r>0.5?"Сильнее рынка: лонг":r<-0.5?"Слабее рынка: шорт":"Идёт с рынком");
+}
+let wl=[];try{wl=JSON.parse(localStorage.getItem("wl")||"[]")}catch(e){wl=[]}
+function renderWl(){
+  try{localStorage.setItem("wl",JSON.stringify(wl))}catch(e){}
+  const list=wl.map((w,i)=>({w,i,r:rrsOf(w.c,w.a,n("wlM"),n("wlMA"))})).sort((x,y)=>y.r-x.r);
+  $("wlBody").innerHTML=list.length?list.map(o=>`<tr><td>${o.w.t.replace(/[<>&]/g,"")}</td><td></td><td></td><td class="mono ${o.r>=0?"long":"short"}">${f(o.r)}</td><td>${o.r>0.5?"Лонг":o.r<-0.5?"Шорт":"Ждать"}</td><td><button data-i="${o.i}" aria-label="Удалить">×</button></td></tr>`).join(""):'<tr><td colspan="6" class="empty">Добавьте тикеры выше.</td></tr>';
+  document.querySelectorAll("#wlBody button").forEach(b=>b.onclick=()=>{wl.splice(+b.dataset.i,1);renderWl()});
+}
+$("wlAdd").onclick=()=>{if(!$("wlT").value.trim()||!n("wlA"))return;wl.push({t:$("wlT").value.trim().toUpperCase(),c:n("wlC"),a:n("wlA")});$("wlT").value="";$("wlC").value="";$("wlA").value="";renderWl()};
+function calcRk(){
+  const a=n("rkA"),p=n("rkP"),r=a*p/100;
+  $("rkOut").innerHTML=row("Риск на сделку (1R)",`$"+f(r)`)+row("Дневной лимит убытка",`$"+f(n("rkL")*r)`,"short")+row("Счёт после 5 убытков подряд",`$"+f(a*Math.pow(1-p/100,5))`)+row("Счёт после 10 убытков подряд",`$"+f(a*Math.pow(1-p/100,10))`)+row("Прибыль при +2R",`$"+f(2*r)`,"long");
+}
+const CK={l:["SPY идёт вверх или держится","Акция сильнее SPY (RRS выше 0)","Есть катализатор","Объём выше обычного","Вход не под сильным сопротивлением","ATR позволяет дойти до цели","Стоп по ATR, размер посчитан от риска","Цель даёт минимум 2R","Дневной лимит убытка не исчерпан"],
+ s:["SPY идёт вниз или слабеет","Акция слабее SPY (RRS ниже 0)","Есть катализатор","Объём выше обычного","Вход не над сильной поддержкой","Borrow доступен, нет риска short squeeze","Стоп по ATR, размер посчитан от риска","Цель даёт минимум 2R","Дневной лимит убытка не исчерпан"]};
+function ckRender(){
+  const it=CK[$("ckSide").value];
+  $("ckList").innerHTML=it.map(t=>`<label class="check"><input type="checkbox"><span>${t}</span></label>`).join("");
+  const upd=()=>{const c=document.querySelectorAll("#ckList input:checked").length;$("ckRes").textContent=c===it.length?"Всё сходится. Можно рассматривать вход.":`Выполнено ${c} из ${it.length}. Лучше пропустить сделку.`};
+  document.querySelectorAll("#ckList input").forEach(i=>i.onchange=upd);upd();
+}
+$("ckSide").onchange=ckRender;
+["dir","acct","rp","entry","atr","sATR","tATR"].forEach(i=>$(i).oninput=calcPos);
+["sChg","sAtr","mChg","mAtr"].forEach(i=>$(i).oninput=calcRRS);
+["wlM","wlMA"].forEach(i=>$(i).oninput=renderWl);
+["rkA","rkP","rkL"].forEach(i=>$(i).oninput=calcRk);
+calcPos();calcRRS();renderWl();calcRk();ckRender();
+}
+</script>
+</body>
+</html>
