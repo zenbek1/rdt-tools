@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -86,11 +85,11 @@ table button{min-height:32px}
 .fill{height:100%;background:var(--acc)}
 .qa{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
 .card{box-shadow:0 1px 2px rgba(0,0,0,.05)}
-</style>
+#auth{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.55);overflow:auto;padding:16px}#auth[hidden]{display:none}</style>
 </head>
 <body>
 <main>
-<div style="display:flex;justify-content:space-between;align-items:center"><h1>Real Day Trading</h1><button id="thm" aria-label="Сменить тему">◐</button></div>
+<div style="display:flex;justify-content:space-between;align-items:center"><h1>Real Day Trading</h1><div class="bar"><button id="acc">Войти</button><button id="thm" aria-label="Сменить тему">◐</button></div></div>
 <div id="sub" class="chips" role="tablist"></div>
 <nav role="tablist" id="tabs">
 <button role="tab" aria-selected="true" data-t="db">Главная</button>
@@ -216,6 +215,7 @@ table button{min-height:32px}
 </dl></section>
 </main>
 <div id="bot" role="navigation" aria-label="Разделы"></div>
+<div id="auth" hidden role="dialog" aria-modal="true"></div>
 
 <dialog id="dlg">
 <h2 id="dT">Новая сделка</h2>
@@ -646,6 +646,104 @@ $("db").onclick=async e=>{const b=e.target.closest("button");if(!b)return;
   else if(b.dataset.act==="ref"){await mkRefresh();renderDb()}};
 go("db");
 }
+</script>
+
+<script>
+(()=>{
+const U="https://etyudoevlntapoajsxqb.supabase.co",K="sb_publishable_tdjTCLgZxzz6CNfeIv_gTA_DIGFvs53";
+const $=id=>document.getElementById(id),raw=Storage.prototype.setItem;
+const isSyn=k=>["tj","wl","mk","course","qerr","qhist","tdkey"].includes(k)||k.startsWith("plan:");
+const canon=v=>JSON.stringify(v,(k,x)=>x&&typeof x==="object"&&!Array.isArray(x)?Object.keys(x).sort().reduce((o,y)=>(o[y]=x[y],o),{}):x);
+let S=null,STAT="Не синхронизировано",mode="in";
+try{S=JSON.parse(localStorage.getItem("rdt_sess")||"null")}catch(e){}
+const saveS=v=>{S=v;if(v)raw.call(localStorage,"rdt_sess",JSON.stringify(v));else localStorage.removeItem("rdt_sess")};
+const mkS=j=>({a:j.access_token,r:j.refresh_token,e:j.expires_at||Math.floor(Date.now()/1000)+(j.expires_in||3600),uid:j.user.id,em:String(j.user.email||"").replace(/[<>&"]/g,"")});
+async function auth(path,body){
+  const r=await fetch(U+"/auth/v1/"+path,{method:"POST",headers:{apikey:K,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error_description||j.msg||j.message||"Ошибка "+r.status);
+  return j;
+}
+async function tok(){
+  if(!S)throw new Error("Нет входа");
+  if(S.e-60<Date.now()/1000){const j=await auth("token?grant_type=refresh_token",{refresh_token:S.r});saveS(mkS(j))}
+  return S.a;
+}
+async function rest(m,p,b,x){
+  const t=await tok();
+  const r=await fetch(U+"/rest/v1/"+p,{method:m,headers:Object.assign({apikey:K,Authorization:"Bearer "+t,"Content-Type":"application/json"},x||{}),body:b?JSON.stringify(b):undefined});
+  const tx=await r.text();let j=null;try{j=tx?JSON.parse(tx):null}catch(e){}
+  if(!r.ok)throw new Error((j&&(j.message||j.msg))||"HTTP "+r.status);
+  return j;
+}
+async function push(ks){
+  const rows=[];ks.forEach(k=>{try{const v=JSON.parse(localStorage.getItem(k));if(v!==null)rows.push({k,v})}catch(e){}});
+  if(rows.length)await rest("POST","user_data?on_conflict=user_id,k",rows,{Prefer:"resolution=merge-duplicates,return=minimal"});
+}
+function stat(t){STAT=t;const a=$("acc");a.title=t;const o=$("auSt");if(o)o.textContent=t}
+function setAcc(){$("acc").textContent=S?"☁ "+S.em.split("@")[0].slice(0,12):"Войти"}
+async function syncDown(){
+  const rows=await rest("GET","user_data?select=k,v"),cl={};rows.forEach(x=>cl[x.k]=x.v);
+  const first=!localStorage.getItem("rdt_f_"+S.uid),up=[];let ch=false;
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);if(!isSyn(k))continue;
+    let lv;try{lv=JSON.parse(localStorage.getItem(k))}catch(e){continue}
+    if(!(k in cl)){up.push(k);continue}
+    if(first&&k==="tj"){const m=new Map();(lv||[]).concat(cl.tj||[]).forEach(t=>m.set(t.id,t));cl.tj=[...m.values()];up.push("tj")}
+  }
+  for(const k in cl){
+    if(!isSyn(k))continue;
+    const cur=localStorage.getItem(k);let lv=null;try{lv=JSON.parse(cur)}catch(e){}
+    if(cur===null||canon(lv)!==canon(cl[k])){raw.call(localStorage,k,JSON.stringify(cl[k]));ch=true}
+  }
+  raw.call(localStorage,"rdt_f_"+S.uid,"1");
+  if(up.length)await push(up);
+  stat("Синхронизировано");
+  if(ch){const l=+sessionStorage.getItem("rdt_rl")||0;if(Date.now()-l>15000){sessionStorage.setItem("rdt_rl",Date.now());location.reload()}}
+}
+const dirty=new Set();let tm;
+async function flush(){
+  const ks=[...dirty];dirty.clear();if(!S||!ks.length)return;
+  try{await push(ks);stat("Синхронизировано")}catch(e){ks.forEach(k=>dirty.add(k));stat("Ошибка синхронизации")}
+}
+Storage.prototype.setItem=function(k,v){
+  raw.call(this,k,v);
+  if(this===localStorage&&S&&isSyn(k)){dirty.add(k);clearTimeout(tm);tm=setTimeout(flush,800);stat("Сохранение…")}
+};
+const tr=e=>/fetch|network|load failed/i.test(e.message)?"Нет связи с Supabase. На странице claude.ai это не работает: откройте сайт на своём хостинге.":/invalid login/i.test(e.message)?"Неверный email или пароль.":e.message;
+function draw(){
+  $("auth").innerHTML='<div class="card" style="max-width:380px;margin:6vh auto"><h2>'+(S?"Аккаунт":mode==="in"?"Вход":"Регистрация")+"</h2>"+(S?
+   `<p>Вы вошли как <b>${S.em}</b></p><p class="note" id="auSt">${STAT}</p><div class="bar"><button class="p" id="auSync">Синхронизировать</button><button id="auOut">Выйти</button><button id="auX">Закрыть</button></div>`:
+   `<div class="bar" style="margin-bottom:10px"><button id="auM1" ${mode==="in"?'class="p"':""}>Вход</button><button id="auM2" ${mode==="up"?'class="p"':""}>Регистрация</button></div>
+    <label>Email<input id="auE" type="email" autocomplete="email"></label>
+    <label style="margin-top:10px">Пароль (от 6 символов)<input id="auP" type="password" autocomplete="${mode==="in"?"current-password":"new-password"}"></label>
+    <div class="bar" style="margin-top:12px"><button class="p" id="auGo">${mode==="in"?"Войти":"Создать аккаунт"}</button><button id="auSkip">Продолжить без входа</button></div>
+    <p class="note short" id="auM"></p><p class="note">Без входа данные остаются только в этом браузере.</p>`)+"</div>";
+  const msg=t=>{$("auM").textContent=t};
+  if(S){
+    $("auX").onclick=()=>{$("auth").hidden=true};
+    $("auSync").onclick=()=>syncDown().catch(e=>stat(tr(e)));
+    $("auOut").onclick=async()=>{await flush();Object.keys(localStorage).filter(isSyn).forEach(k=>localStorage.removeItem(k));saveS(null);location.reload()};
+    return;
+  }
+  $("auM1").onclick=()=>{mode="in";draw()};$("auM2").onclick=()=>{mode="up";draw()};
+  $("auSkip").onclick=()=>{raw.call(localStorage,"rdt_local","1");$("auth").hidden=true};
+  $("auGo").onclick=async()=>{
+    const e=$("auE").value.trim(),p=$("auP").value;
+    if(!e||p.length<6){msg("Введите email и пароль от 6 символов.");return}
+    msg("Подождите…");
+    try{
+      const j=mode==="in"?await auth("token?grant_type=password",{email:e,password:p}):await auth("signup",{email:e,password:p});
+      if(!j.access_token){msg("Аккаунт создан. Подтвердите почту по ссылке из письма и затем войдите.");return}
+      saveS(mkS(j));setAcc();$("auth").hidden=true;await syncDown();
+    }catch(x){S?0:msg(tr(x))}
+  };
+}
+$("acc").onclick=()=>{draw();$("auth").hidden=false};
+setAcc();
+if(S)syncDown().catch(e=>stat(tr(e)));
+else if(!localStorage.getItem("rdt_local")){draw();$("auth").hidden=false}
+})();
 </script>
 </body>
 </html>
