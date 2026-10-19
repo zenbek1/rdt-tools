@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -140,7 +139,7 @@ table button{min-height:32px}
 <div class="bar" style="margin-top:12px"><input id="mkT" placeholder="Тикер, например AMD" style="flex:1;min-width:140px;width:auto;margin:0"><button class="p" id="mkAdd">Добавить</button><button id="mkRef">Обновить</button><label class="check" style="border:0;padding:0"><input type="checkbox" id="mkFav"><span>Только избранные</span></label></div>
 <div id="mkMsg" class="note"></div>
 <div class="scroll"><table><thead><tr><th></th><th>Тикер</th><th>Цена</th><th>Δ%</th><th>к SPY</th><th>RRS</th><th>Статус</th><th></th></tr></thead><tbody id="mkBody"></tbody></table></div>
-<p class="note">Данные берутся с Twelve Data. Получите бесплатный ключ на twelvedata.com (Sign up, затем API Keys). Бесплатный тариф: 8 запросов в минуту и 800 в день, до 8 тикеров за обновление, условия и задержку котировок проверяйте у провайдера. RRS здесь дневной: движение за день, делённое на дневной ATR (14). Статус: RS при RRS от 0,5, RW при RRS от −0,5 и ниже (пороги мои). Ключ хранится только в вашем браузере. Работает только на вашем хостинге (GitHub Pages и т.п.), на странице claude.ai запросы к бирже заблокированы.</p></section>
+<p class="note">Данные берутся с Twelve Data. Получите бесплатный ключ на twelvedata.com (Sign up, затем API Keys). Бесплатный тариф: 8 запросов в минуту и 800 в день, сайт сам растягивает загрузку по времени, чтобы не превысить лимит, условия и задержку котировок проверяйте у провайдера. RRS здесь дневной: движение за день, делённое на дневной ATR (14). Статус: RS при RRS от 0,5, RW при RRS от −0,5 и ниже (пороги мои). Ключ хранится только в вашем браузере. Работает только на вашем хостинге (GitHub Pages и т.п.), на странице claude.ai запросы к бирже заблокированы.</p></section>
 <section class="card" id="wl" hidden>
 <div class="g2 narrow"><label>Изменение SPY, $<input id="wlM" type="number" step="0.01" value="1"></label><label>ATR SPY, $<input id="wlMA" type="number" step="0.01" value="5"></label></div>
 <div class="g2 narrow" style="margin-top:10px;grid-template-columns:1fr 1fr 1fr auto;align-items:end"><label>Тикер<input id="wlT" type="text"></label><label>Изменение, $<input id="wlC" type="number" step="0.01"></label><label>ATR, $<input id="wlA" type="number" step="0.01"></label><button class="p" id="wlAdd">Добавить</button></div>
@@ -563,7 +562,7 @@ $("thm").onclick=()=>{const r=document.documentElement,d=r.dataset.theme==="dark
 const MK=LS("mk")||{t:["AAPL","NVDA","TSLA"],f:[]};
 let tdKey=LS("tdkey")||"",qd={},atrc=LS("atrc")||{},atrBusy=false;
 const saveMk=()=>SV("mk",MK);
-const syms=()=>["SPY",...MK.t.filter(x=>x!=="SPY")].slice(0,8);
+const syms=()=>["SPY",...MK.t.filter(x=>x!=="SPY")];
 function mkRender(){
   const sp=qd.SPY,sa=atrc.SPY&&atrc.SPY.v,ok=sp&&!sp.err;
   const sc2=ok?sp.p-sp.pc:null,pi=ok&&sa?sc2/sa:null,spct=ok?sc2/sp.pc*100:null;
@@ -576,33 +575,63 @@ function mkRender(){
     const st=rrs===null?"—":rrs>=0.5?'<b class="long">RS</b>':rrs<=-0.5?'<b class="short">RW</b>':"Нейтрально";
     return `<tr><td>${star}</td><td>${t}</td><td class="mono">${f(d.p)}</td><td class="mono ${pct>=0?"long":"short"}">${f(pct)}%</td><td class="mono">${spct===null?"—":f(pct-spct)+"%"}</td><td class="mono">${rrs===null?"—":f(rrs)}</td><td>${st}</td><td>${del}</td></tr>`}).join("")||'<tr><td colspan="8" class="empty">Список пуст.</td></tr>';
 }
-async function mkRefresh(){
+let tdLog=[],tdQ=Promise.resolve(),mkOk="",tdUrl="https://api.twelvedata.com/";
+try{tdLog=JSON.parse(localStorage.getItem("tdlog")||"[]")}catch(e){tdLog=[]}
+const saveLog=()=>{try{localStorage.setItem("tdlog",JSON.stringify(tdLog))}catch(e){}};
+const tdErr=m=>/run out of API credits/i.test(m)?"Лимит минуты исчерпан. Подождите минуту.":/not available with your plan|symbol|not found/i.test(m)?"Тикер не найден или недоступен на бесплатном тарифе. Проверьте написание.":m;
+function tdWait(cost){
+  return new Promise(res=>{
+    const go2=()=>{
+      const now=Date.now();while(tdLog.length&&now-tdLog[0][0]>61000)tdLog.shift();
+      const used=tdLog.reduce((a,x)=>a+x[1],0);
+      if(used+cost<=7){tdLog.push([now,cost]);saveLog();res();return}
+      const w=Math.max(1000,61000-(now-tdLog[0][0]));
+      $("mkMsg").textContent=`Лимит бесплатного тарифа: ждём ${Math.ceil(w/1000)} с…`;
+      setTimeout(go2,Math.min(w,3000));
+    };go2();
+  });
+}
+function tdRun(cost,url){const p=tdQ.catch(()=>{}).then(async()=>{await tdWait(cost);const r=await fetch(url);return r.json()});tdQ=p;return p}
+async function mkRefresh(only){
   if(!tdKey){$("mkMsg").textContent="Сначала вставьте ключ Twelve Data и сохраните его.";return}
-  const list=syms();$("mkMsg").textContent="Загрузка…";
+  const list=Array.isArray(only)?only:syms(),chunks=[];
+  for(let i=0;i<list.length;i+=6)chunks.push(list.slice(i,i+6));
+  $("mkMsg").textContent="Загрузка…";
   try{
-    const r=await fetch("https://api.twelvedata.com/quote?symbol="+list.join(",")+"&apikey="+encodeURIComponent(tdKey));
-    const j=await r.json();
-    if(j.status==="error"&&j.code){$("mkMsg").textContent="Ошибка провайдера: "+(j.message||j.code);return}
-    const m=j.symbol?{[j.symbol]:j}:j;
-    list.forEach(x=>{const q=m[x];if(q&&q.close&&q.status!=="error")qd[x]={p:parseFloat(q.close),pc:parseFloat(q.previous_close),open:q.is_market_open};else qd[x]={err:(q&&q.message)||"нет данных"}});
-    $("mkMsg").textContent="Обновлено "+new Date().toLocaleTimeString("ru-RU")+(MK.t.length+1>8?". Показаны первые 8 тикеров (лимит бесплатного тарифа).":"");
-    mkRender();mkAtr();
+    for(const ch of chunks){
+      const j=await tdRun(ch.length,tdUrl+"quote?symbol="+ch.join(",")+"&apikey="+encodeURIComponent(tdKey));
+      if(j.status==="error"&&j.code){
+        if(/run out of API credits/i.test(j.message||"")){tdLog.push([Date.now(),8]);saveLog()}
+        $("mkMsg").textContent=tdErr(j.message||String(j.code));return;
+      }
+      const m=j.symbol?{[j.symbol]:j}:j;
+      ch.forEach(x=>{const q=m[x];if(q&&q.close&&q.status!=="error")qd[x]={p:parseFloat(q.close),pc:parseFloat(q.previous_close),open:q.is_market_open};else qd[x]={err:tdErr((q&&q.message)||"нет данных")}});
+      mkRender();
+    }
+    mkOk="Обновлено "+new Date().toLocaleTimeString("ru-RU");$("mkMsg").textContent=mkOk;
+    mkAtr();
   }catch(e){$("mkMsg").textContent="Не удалось связаться с биржевым API. На странице claude.ai такие запросы заблокированы: откройте сайт со своего хостинга."}
 }
 async function mkAtr(){
   if(atrBusy)return;atrBusy=true;const d=today();
-  for(const x of syms()){
-    if(atrc[x]&&atrc[x].d===d)continue;
-    try{const r=await fetch(`https://api.twelvedata.com/atr?symbol=${x}&interval=1day&time_period=14&outputsize=1&apikey=${encodeURIComponent(tdKey)}`);
-      const j=await r.json(),v=j.values&&j.values[0]?parseFloat(j.values[0].atr):0;
-      if(v){atrc[x]={d,v};SV("atrc",atrc);mkRender()}}catch(e){}
-    await new Promise(r=>setTimeout(r,8000));
-  }
-  atrBusy=false;
+  try{
+    for(const x of syms()){
+      if(atrc[x]&&atrc[x].d===d)continue;
+      if(qd[x]&&qd[x].err)continue;
+      const j=await tdRun(1,`${tdUrl}atr?symbol=${x}&interval=1day&time_period=14&outputsize=1&apikey=${encodeURIComponent(tdKey)}`);
+      if(j.status==="error"){
+        if(/run out of API credits/i.test(j.message||"")){tdLog.push([Date.now(),8]);saveLog();continue}
+        atrc[x]={d,v:0};SV("atrc",atrc);continue;
+      }
+      const v=j.values&&j.values[0]?parseFloat(j.values[0].atr):0;
+      atrc[x]={d,v:v||0};SV("atrc",atrc);mkRender();
+    }
+  }catch(e){}
+  atrBusy=false;if(mkOk)$("mkMsg").textContent=mkOk;
 }
 $("mkSave").onclick=()=>{const v=$("mkKey").value.trim();if(!v)return;tdKey=v;SV("tdkey",v);$("mkKey").value="";$("mkMsg").textContent="Ключ сохранён в этом браузере.";};
-$("mkAdd").onclick=()=>{const t=$("mkT").value.trim().toUpperCase().replace(/[^A-Z0-9.\-]/g,"");if(!t||MK.t.includes(t))return;MK.t.push(t);saveMk();$("mkT").value="";mkRender();mkRefresh()};
-$("mkRef").onclick=mkRefresh;$("mkFav").onchange=mkRender;
+$("mkAdd").onclick=()=>{const t=$("mkT").value.trim().toUpperCase().replace(/[^A-Z0-9.\-]/g,"");if(!t||MK.t.includes(t))return;MK.t.push(t);saveMk();$("mkT").value="";mkRender();mkRefresh(qd.SPY?[t]:["SPY",t])};
+$("mkRef").onclick=()=>mkRefresh();$("mkFav").onchange=mkRender;
 $("mkBody").onclick=e=>{const b=e.target.closest("button");if(!b)return;const t=b.dataset.s;
   if(b.dataset.a==="fav")MK.f=MK.f.includes(t)?MK.f.filter(x=>x!==t):MK.f.concat(t);else{MK.t=MK.t.filter(x=>x!==t);MK.f=MK.f.filter(x=>x!==t)}
   saveMk();mkRender()};
